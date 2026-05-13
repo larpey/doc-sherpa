@@ -1,0 +1,30 @@
+__pycache__/
+*.pyc
+.venv/
+.env
+*.db
+*.sqlite
+*.sqlite3
+
+training-service/storage/
+runtime-engine/incoming/
+runtime-engine/processed/
+
+# Reference code from the private scan-to-sharepoint repo. Pulled locally
+# for shape/pattern study only — must not be redistributed via this repo.
+docs/_reference/
+
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+htmlcov/
+.coverage
+dist/
+build/
+*.egg-info/
+
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db

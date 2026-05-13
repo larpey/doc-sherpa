@@ -1,0 +1,183 @@
+# Memory namespace seeds — durable snapshot of architectural decisions
+# from the kickoff brief. Re-runnable into a memory backend (claude-flow,
+# RuFlow, AgentDB, etc.) once the tooling is working.
+#
+# Format: {namespace}.{key}: { value, rationale (optional), source }
+#
+# To replay into claude-flow once installed:
+#   for k v in $(yq '.entries[] | "\(.key) \(.value | @sh)"' memory-seeds.yaml); do
+#     npx @claude-flow/cli memory store --key "$k" --value "$v" \
+#       --namespace "${k%%.*}";
+#   done
+
+entries:
+
+  # ---- arch.* : protocols, module boundaries, naming ----------------------
+
+  - key: arch.plugin-categories
+    namespace: arch
+    value: |
+      Four plugin categories live in shared/protocols/ as typing.Protocol
+      classes. POC priority order:
+        1. DocumentDestination — filesystem → S3 → Google Drive → SharePoint
+        2. AIClassifier — Anthropic Claude (used by both services)
+        3. NotificationSink — webhook (Slack/generic), email later
+        4. DocumentIngest — watch folder → HTTP upload
+      Database, OCR, and Auth are NOT abstracted yet (one impl each).
+
+  - key: arch.directory-naming
+    namespace: arch
+    value: |
+      Top-level dirs use hyphens (training-service/, runtime-engine/).
+      Python packages inside use underscores (training_service/,
+      runtime_engine/). Hyphens aren't valid Python identifiers; this is
+      the cheapest reconciliation. Run via:
+        uvicorn training_service.main:app --app-dir training-service
+
+  - key: arch.cohesion-rule
+    namespace: arch
+    value: |
+      One responsibility per module. If naming the file needs "and," it's
+      two things — split. Triage on cohesion, not line count. A module
+      growing because it's feature-completing one domain is fine; one
+      accumulating unrelated concerns is not. The 200th line is where
+      decisions calcify — pause before each new feature and ask "is this
+      still one thing?"
+    rationale: |
+      The reference repo's scan_to_sharepoint.py is 3494 lines because
+      it's the event log + review queue + knowledge graph + classifier
+      + pipeline orchestrator in one file. We are not building that
+      version of this system.
+
+  - key: arch.code-quality
+    namespace: arch
+    value: |
+      - Type hints everywhere; `Any` only with inline justification comment
+      - Public functions have docstrings explaining intent (why, not what)
+      - Plugin interface tests use fakes, not mocks
+      - One service-level test per major flow
+      - Target 70%+ coverage on new code (measure, not gate)
+
+  # ---- spec.* : phase deliverables, definition of done --------------------
+
+  - key: spec.phase1-deliverables
+    namespace: spec
+    value: |
+      Training service end-to-end:
+        1. FastAPI app skeleton                      [done]
+        2. Upload endpoint (20-30 PDFs, temp dir)    [done]
+        3. Labeling UI (5-category dropdown + fields)[done]
+        4. Iteration: OCR → Claude Sonnet regex synth, 20% validation hold-out
+        5. Output endpoint: download classifier.yaml
+        6. Session cleanup (24h TTL)                 [stub wired in lifespan]
+
+  - key: spec.train-validate-split
+    namespace: spec
+    value: |
+      Hold back 20% of the corpus as a never-seen validation set. Stop
+      iterating when validation match-rate stops improving — NOT when
+      training match-rate hits the ceiling. Prevents overfitting regex
+      to the specific labeled samples.
+
+  - key: spec.what-not-to-build-phase-1
+    namespace: spec
+    value: |
+      - Runtime engine (phase 2)
+      - Setup wizard (phase 3)
+      - SharePoint or any destination plugin
+      - Real auth (env-var token is fine)
+      - Multi-tenant DB schema
+      - Billing
+
+  - key: spec.definition-of-done
+    namespace: spec
+    value: |
+      A non-technical operator can: (a) run `docker compose up` on the
+      runtime engine, (b) visit the training service, upload sample docs,
+      get a classifier.yaml, (c) drop that YAML into the runtime engine
+      config and have classification working on their real scans.
+
+  - key: spec.budget
+    namespace: spec
+    value: |
+      Use claude-sonnet-4-5 for regex synthesis. Track and log cost per
+      session. Full training run target: under $10 in Sonnet usage.
+
+  - key: spec.document-types
+    namespace: spec
+    value: |
+      Five categories (vocabulary from the reference deployment at Kristen
+      Distributing): trade_out, bol, pod, donation, invoice. Order in
+      DOC_TYPE_RULES is significant in the reference (trade_out → bol →
+      pod → donation → invoice) — that *order* should be re-learned per
+      customer by the training service; the *vocabulary* is fixed for POC.
+
+  # ---- decisions.* : design choices with rationale ------------------------
+
+  - key: decisions.training-service-first
+    namespace: decisions
+    value: |
+      Build training service end-to-end before touching the runtime engine.
+    rationale: |
+      The training service is the differentiating piece and the customer's
+      first interaction. Runtime engine is commodity OCR-classify-route
+      that we deliberately don't over-invest in.
+
+  - key: decisions.no-orm
+    namespace: decisions
+    value: |
+      Use stdlib sqlite3 directly. No SQLAlchemy, no Django ORM.
+    rationale: |
+      Schema is three tables, queries are short. The surface area we'd
+      buy with an ORM is smaller than the dependency cost. Revisit if we
+      ever need migrations beyond CREATE TABLE IF NOT EXISTS.
+
+  - key: decisions.no-template-engine
+    namespace: decisions
+    value: |
+      Render the labeling UI with plain f-strings + html.escape. No Jinja.
+    rationale: |
+      Four pages total. Jinja buys little here. Swap when the UI grows
+      past five pages or needs partials.
+
+  - key: decisions.no-premature-protocols
+    namespace: decisions
+    value: |
+      Database, OCR, and Auth are intentionally single-implementation
+      (sqlite3, ocrmypdf+tesseract, env-var token). Do NOT abstract them
+      behind Protocols yet.
+    rationale: |
+      An abstraction with one implementation is friction without value.
+      Promote to a Protocol when a second implementation actually arrives,
+      not before.
+
+  - key: decisions.haiku-vs-sonnet
+    namespace: decisions
+    value: |
+      Training service uses claude-sonnet-4-5 (rare, expensive, one call
+      per training run). Runtime engine AI fallback uses claude-haiku-4-5
+      (frequent, cheap, one call per low-confidence document).
+    rationale: |
+      Same AIClassifier Protocol; different model + prompt. The shape is
+      identical so the plugin can be reused; the deployment configures
+      which model.
+
+  - key: decisions.cleanup-after-db-commit
+    namespace: decisions
+    value: |
+      Cleanup deletes the DB row first, then the filesystem dir.
+    rationale: |
+      A crash mid-cleanup leaves orphaned FILES (recoverable, free space
+      reclaimable by re-running cleanup) rather than orphaned DB ROWS
+      pointing at deleted files (confusing, breaks downstream queries).
+
+  - key: decisions.fastapi-upload-injection
+    namespace: decisions
+    value: |
+      Use FastAPI's List[UploadFile] = File(default=[]) injection in the
+      upload route, not manual `await request.form()` parsing.
+    rationale: |
+      `fastapi.UploadFile` subclasses `starlette.UploadFile`, and
+      `request.form()` returns the parent class. The isinstance check
+      against the FastAPI subclass returns False, silently dropping all
+      uploads. The injection avoids this trap.
