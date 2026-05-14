@@ -82,8 +82,29 @@ class RuntimeEngineSettings(BaseSettings):
         default="unclassified/{year}/{original_filename}",
     )
 
+    # --- OCR --------------------------------------------------------------
+    ocr_engine: str = Field(
+        default="auto",
+        description=(
+            "Which OCR backend to use: 'auto' picks rapidocr if installed, "
+            "else tesseract; 'rapidocr' forces RapidOCR (ONNX, multi-"
+            "threaded, ~100 MB); 'tesseract' forces ocrmypdf+tesseract "
+            "(single-threaded, needs the system tesseract binary)."
+        ),
+    )
+
     # --- watcher ----------------------------------------------------------
     poll_interval_seconds: float = Field(default=2.0, gt=0.0)
+    watcher_parallelism: int = Field(
+        default=1,
+        ge=1,
+        le=32,
+        description=(
+            "How many documents to process concurrently per scan pass. "
+            "1 is sequential (safe default). Set to your CPU core count "
+            "for max throughput. Each worker holds one OCR call in flight."
+        ),
+    )
     stability_check_seconds: float = Field(
         default=1.0,
         description=(

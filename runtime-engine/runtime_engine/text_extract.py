@@ -21,6 +21,17 @@ from . import ocr as ocr_module
 
 logger = logging.getLogger(__name__)
 
+
+def _ocr_engine_setting() -> str:
+    """Read the engine preference from settings without importing eagerly.
+
+    Imported lazily because `settings` pulls in pydantic-settings which
+    is fine but adds latency to the cold import of this module.
+    """
+    from .settings import settings
+
+    return settings.ocr_engine
+
 # Heuristic: if pypdf extracts fewer than this many characters of text,
 # treat the PDF as scanned and fall through to OCR. Scanned pages often
 # yield a handful of garbled chars from form labels rendered as text;
@@ -74,7 +85,7 @@ def extract_text(path: Path) -> str:
         return born_digital
 
     try:
-        ocred = ocr_module.ocr_pdf(path)
+        ocred = ocr_module.ocr_pdf(path, engine=_ocr_engine_setting())
     except ocr_module.OCRError as exc:
         logger.warning("OCR failed on %s: %s", path.name, exc)
         return born_digital

@@ -52,15 +52,38 @@ pip install -e .[dev]
 uvicorn runtime_engine.main:app --app-dir runtime-engine --reload --port 8002
 ```
 
-## Tesseract install (required for scanned PDFs)
+## OCR engine
 
-- **Windows:** `choco install tesseract` or download from <https://github.com/UB-Mannheim/tesseract/wiki>
+Doc Sherpa ships with two OCR backends; pick one. Default is **RapidOCR**
+(faster, multi-threaded, no system deps).
+
+### RapidOCR (default, recommended)
+
+ONNX-runtime based. Multi-threaded per call (uses all CPU cores). ~100 MB
+install (model files cached after first run). Cross-platform, no system
+binaries needed.
+
+```bash
+pip install -e .[rapidocr]
+# or in the Docker image: included by default.
+```
+
+### Tesseract (opt-in, legacy / fallback)
+
+Single-threaded. Mature. Requires the OS-level tesseract binary on PATH.
+
+- **Windows:** `choco install tesseract` or <https://github.com/UB-Mannheim/tesseract/wiki>
 - **macOS:** `brew install tesseract`
 - **Debian/Ubuntu:** `apt install tesseract-ocr ghostscript`
 - **Alpine:** `apk add tesseract-ocr ghostscript`
 
-Without tesseract, **born-digital PDFs still work**. Scanned PDFs go to
-`unclassified/` with a warning logged.
+```bash
+pip install -e .[tesseract]
+```
+
+Set `RUNTIME_ENGINE_OCR_ENGINE=tesseract` to force it. Default `auto`
+picks RapidOCR if installed, else tesseract, else logs a warning and
+sends scanned PDFs to `unclassified/`.
 
 ## Env vars
 
@@ -76,7 +99,17 @@ Without tesseract, **born-digital PDFs still work**. Scanned PDFs go to
 | `RUNTIME_ENGINE_AUTO_CREATE_FOLDERS` | `true` | Pre-existing folders only if `false` |
 | `RUNTIME_ENGINE_POLL_INTERVAL_SECONDS` | `2.0` | How often watcher scans |
 | `RUNTIME_ENGINE_LLM_MODEL` | `claude-haiku-4-5-20251001` | LLM fallback model |
+| `RUNTIME_ENGINE_OCR_ENGINE` | `auto` | `auto` \| `rapidocr` \| `tesseract` |
+| `RUNTIME_ENGINE_WATCHER_PARALLELISM` | `1` | Concurrent docs per scan pass (set to core count) |
 | `ANTHROPIC_API_KEY` | (unset) | Required for LLM fallback |
+
+## Throughput tuning
+
+The watcher processes documents sequentially by default. On a multi-core
+VPS, raise `RUNTIME_ENGINE_WATCHER_PARALLELISM` to the core count to
+process N PDFs concurrently. Combined with RapidOCR's multi-threaded
+inference, this typically gives 3–4× throughput on a 4-core box vs. the
+single-threaded tesseract default.
 
 ## Backup
 

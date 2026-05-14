@@ -103,6 +103,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             delete_source_after_place=settings.delete_source_after_place,
             ai_fallback=ai_fallback,
             auto_confirm_threshold=settings.auto_confirm_threshold,
+            parallelism=settings.watcher_parallelism,
         ),
         name="watcher",
     )

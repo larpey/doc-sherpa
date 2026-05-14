@@ -64,6 +64,75 @@ def _content_already_processed(db_path: Path, content_hash: str) -> bool:
     return log_module.get_by_content_hash(db_path, content_hash) is not None
 
 
+def _collect_candidates(
+    watch_dir: Path,
+    db_path: Path,
+    stability_seconds: float,
+) -> list[tuple[Path, str | None]]:
+    """Return PDFs that are ready to process, paired with their content hash.
+
+    Filters out non-PDFs, already-processed source paths, content-hash
+    duplicates (both against the log AND within this batch — two
+    identical files in the same pass shouldn't both classify), and
+    files that haven't reached stability.
+    """
+    if not watch_dir.exists():
+        return []
+    candidates: list[tuple[Path, str | None]] = []
+    seen_hashes_this_pass: set[str] = set()
+    for path in sorted(watch_dir.iterdir()):
+        if not _is_pdf(path):
+            continue
+        if _already_processed(db_path, path):
+            continue
+        if stability_seconds > 0 and not _is_stable(path, stability_seconds):
+            continue
+        try:
+            content_hash = file_sha256(path)
+        except OSError:
+            content_hash = None
+        if content_hash:
+            if _content_already_processed(db_path, content_hash):
+                logger.info("watcher: skipping duplicate content for %s", path.name)
+                continue
+            if content_hash in seen_hashes_this_pass:
+                logger.info(
+                    "watcher: skipping in-batch duplicate content for %s", path.name
+                )
+                continue
+            seen_hashes_this_pass.add(content_hash)
+        candidates.append((path, content_hash))
+    return candidates
+
+
+def _process_one(
+    path: Path,
+    content_hash: str | None,
+    *,
+    db_path: Path,
+    kb: KnowledgeBase,
+    routing_config: RoutingConfig,
+    destination,
+    ai_fallback,
+    auto_confirm_threshold: float,
+    delete_source_after_place: bool,
+) -> log_module.LogEntry:
+    """Run the pipeline on one document and record the result. CPU-bound."""
+    result = process_document(path, kb, routing_config, destination, ai_fallback=ai_fallback)
+    entry = log_module.record_result(
+        db_path,
+        result,
+        content_sha256=content_hash,
+        auto_confirm_threshold=auto_confirm_threshold,
+    )
+    if delete_source_after_place and result.final_path and not result.error:
+        try:
+            path.unlink()
+        except OSError:
+            logger.warning("could not delete source file after placement: %s", path)
+    return entry
+
+
 def scan_once(
     *,
     watch_dir: Path,
@@ -76,50 +145,71 @@ def scan_once(
     ai_fallback=None,
     auto_confirm_threshold: float = 1.1,
 ) -> list[log_module.LogEntry]:
-    """One pass over `watch_dir`. Returns the entries created this pass.
+    """Synchronous one-pass scan — processes candidates sequentially.
 
-    Files already in the log are skipped. Half-written files (size still
-    changing) are skipped this pass and picked up next time.
+    Kept synchronous for tests and for the parallelism=1 (default) case
+    where the overhead of asyncio.to_thread isn't worth it. `run_loop`
+    uses `scan_once_async` for parallel mode.
     """
-    if not watch_dir.exists():
-        return []
-
+    candidates = _collect_candidates(watch_dir, db_path, stability_seconds)
     new_entries: list[log_module.LogEntry] = []
-    for path in sorted(watch_dir.iterdir()):
-        if not _is_pdf(path):
-            continue
-        if _already_processed(db_path, path):
-            continue
-        if stability_seconds > 0 and not _is_stable(path, stability_seconds):
-            continue
-
-        # Content-hash dedup: same bytes under a different filename
-        # shouldn't be re-classified. We hash before pipelining so we
-        # avoid the OCR / LLM cost on duplicates.
-        try:
-            content_hash = file_sha256(path)
-        except OSError:
-            content_hash = None
-        if content_hash and _content_already_processed(db_path, content_hash):
-            logger.info("watcher: skipping duplicate content for %s", path.name)
-            continue
-
-        result = process_document(path, kb, routing_config, destination, ai_fallback=ai_fallback)
-        entry = log_module.record_result(
-            db_path,
-            result,
-            content_sha256=content_hash,
+    for path, content_hash in candidates:
+        entry = _process_one(
+            path,
+            content_hash,
+            db_path=db_path,
+            kb=kb,
+            routing_config=routing_config,
+            destination=destination,
+            ai_fallback=ai_fallback,
             auto_confirm_threshold=auto_confirm_threshold,
+            delete_source_after_place=delete_source_after_place,
         )
         new_entries.append(entry)
-
-        if delete_source_after_place and result.final_path and not result.error:
-            try:
-                path.unlink()
-            except OSError:
-                logger.warning("could not delete source file after placement: %s", path)
-
     return new_entries
+
+
+async def scan_once_async(
+    *,
+    watch_dir: Path,
+    db_path: Path,
+    kb: KnowledgeBase,
+    routing_config: RoutingConfig,
+    destination,
+    stability_seconds: float = 0.0,
+    delete_source_after_place: bool = False,
+    ai_fallback=None,
+    auto_confirm_threshold: float = 1.1,
+    parallelism: int = 1,
+) -> list[log_module.LogEntry]:
+    """Async one-pass scan — processes candidates up to `parallelism` at a time.
+
+    Each document is run in a worker thread via `asyncio.to_thread`, so
+    the watcher coroutine itself never blocks. A semaphore caps the
+    in-flight count so we don't oversubscribe the CPU.
+    """
+    candidates = _collect_candidates(watch_dir, db_path, stability_seconds)
+    if not candidates:
+        return []
+
+    semaphore = asyncio.Semaphore(max(1, parallelism))
+
+    async def _worker(path: Path, content_hash: str | None) -> log_module.LogEntry:
+        async with semaphore:
+            return await asyncio.to_thread(
+                _process_one,
+                path,
+                content_hash,
+                db_path=db_path,
+                kb=kb,
+                routing_config=routing_config,
+                destination=destination,
+                ai_fallback=ai_fallback,
+                auto_confirm_threshold=auto_confirm_threshold,
+                delete_source_after_place=delete_source_after_place,
+            )
+
+    return await asyncio.gather(*[_worker(p, h) for p, h in candidates])
 
 
 async def run_loop(
@@ -134,16 +224,19 @@ async def run_loop(
     delete_source_after_place: bool,
     ai_fallback=None,
     auto_confirm_threshold: float = 1.1,
+    parallelism: int = 1,
 ) -> None:
-    """Run `scan_once` forever, sleeping `poll_interval_seconds` between passes.
+    """Run `scan_once_async` forever, sleeping `poll_interval_seconds` between passes.
 
     Errors during a pass are logged and swallowed; one bad file should
     not take down the watcher. The watcher itself is cancelled by the
     FastAPI lifespan on shutdown.
+
+    `parallelism` controls how many documents OCR + classify simultaneously.
     """
     while True:
         try:
-            entries = scan_once(
+            entries = await scan_once_async(
                 watch_dir=watch_dir,
                 db_path=db_path,
                 kb=kb,
@@ -153,6 +246,7 @@ async def run_loop(
                 delete_source_after_place=delete_source_after_place,
                 ai_fallback=ai_fallback,
                 auto_confirm_threshold=auto_confirm_threshold,
+                parallelism=parallelism,
             )
             if entries:
                 logger.info("watcher: processed %d new document(s)", len(entries))

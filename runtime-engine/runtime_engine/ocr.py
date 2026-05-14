@@ -1,13 +1,18 @@
-"""OCR for scanned PDFs via ocrmypdf + tesseract.
+"""OCR engine layer — engine-agnostic dispatcher with multiple backends.
 
-`text_extract.py` calls into this module when `pypdf` returns no text —
-i.e. the PDF is rasterized pages, not born-digital. OCR is the slow path
-(seconds per page vs. milliseconds for born-digital), so we never call it
-speculatively.
+Two engines today, picked by `settings.ocr_engine`:
 
-Tesseract has to be installed on the host. ocrmypdf will surface a clear
-error if it's missing; we let it propagate as `OCRError` so the caller
-logs once and falls through to "unclassified" rather than crashing.
+- **rapidocr** (preferred default) — ONNX-runtime-based. Multi-threaded
+  per call (uses all CPU cores), no system deps, ~100 MB install.
+  Same recognition models as PaddleOCR.
+- **tesseract** — single-threaded, mature, requires the OS-level
+  tesseract binary on PATH. Falls back automatically if rapidocr is
+  not installed.
+
+`auto` picks rapidocr if importable, else tesseract.
+
+The dispatcher returns a flat string of recognized text. Callers don't
+care which engine produced it.
 """
 
 from __future__ import annotations
@@ -20,40 +25,100 @@ logger = logging.getLogger(__name__)
 
 
 class OCRError(Exception):
-    """Raised when OCR fails for any reason (missing tesseract, timeout, etc.)."""
+    """Raised when OCR fails for any reason."""
 
 
-def is_available() -> bool:
-    """Whether ocrmypdf + tesseract are both importable / on PATH."""
+# ---------- engine availability checks ----------
+
+def _has_rapidocr() -> bool:
+    try:
+        import rapidocr_onnxruntime  # noqa: F401
+        import pypdfium2  # noqa: F401
+    except ImportError:
+        return False
+    return True
+
+
+def _has_tesseract() -> bool:
     try:
         import ocrmypdf  # noqa: F401
     except ImportError:
         return False
-    # `ocrmypdf` checks tesseract at run time; we don't pre-verify here
-    # because the import-check on tesseract paths is platform-dependent
-    # and the error we get at `ocr()` time is already clear.
     return True
 
 
-def ocr_pdf(source: Path, *, timeout_seconds: int = 120) -> str:
-    """Run OCR on a PDF and return the extracted text.
+def is_available() -> bool:
+    """Whether *any* OCR engine is wired up."""
+    return _has_rapidocr() or _has_tesseract()
 
-    Writes the OCR'd PDF to a temp file (we throw away the rendered copy
-    — the goal here is just the text), then reads text back with pypdf.
 
-    Args:
-        source: Input PDF.
-        timeout_seconds: Hard cap on OCR runtime. A pathological multi-
-            hundred-page PDF would otherwise hold the watcher hostage.
+def _resolve_engine(preferred: str) -> str:
+    """Pick a real engine name from a preference string.
 
-    Raises:
-        OCRError: When ocrmypdf is missing, tesseract is missing, or the
-            run exceeds the timeout / fails for any reason.
+    `preferred` is one of `auto`, `rapidocr`, `tesseract`. Returns the
+    resolved name or raises `OCRError` if nothing is available.
     """
+    if preferred == "rapidocr":
+        if _has_rapidocr():
+            return "rapidocr"
+        raise OCRError("rapidocr requested but not installed")
+    if preferred == "tesseract":
+        if _has_tesseract():
+            return "tesseract"
+        raise OCRError("tesseract requested but ocrmypdf is not installed")
+    # auto
+    if _has_rapidocr():
+        return "rapidocr"
+    if _has_tesseract():
+        return "tesseract"
+    raise OCRError("no OCR engine available — install rapidocr-onnxruntime or ocrmypdf")
+
+
+# ---------- engine: RapidOCR (default) ----------
+
+_rapidocr_instance = None
+
+
+def _get_rapidocr():
+    """Lazy-construct the RapidOCR instance. One per process — cheap to share."""
+    global _rapidocr_instance
+    if _rapidocr_instance is None:
+        from rapidocr_onnxruntime import RapidOCR
+
+        _rapidocr_instance = RapidOCR()
+    return _rapidocr_instance
+
+
+def _ocr_with_rapidocr(source: Path) -> str:
+    """Render each page of the PDF to a raster image, OCR with RapidOCR."""
+    import pypdfium2
+
+    ocr = _get_rapidocr()
+    doc = pypdfium2.PdfDocument(str(source))
+    parts: list[str] = []
     try:
-        import ocrmypdf
-    except ImportError as exc:
-        raise OCRError("ocrmypdf is not installed") from exc
+        for page in doc:
+            # 200 DPI is the standard OCR-quality render — high enough for
+            # accurate recognition without burning time on 600 DPI scans.
+            bitmap = page.render(scale=200 / 72)
+            pil_image = bitmap.to_pil()
+            result, _elapsed = ocr(pil_image)
+            if not result:
+                continue
+            page_text = "\n".join(item[1] for item in result if len(item) >= 2 and item[1])
+            if page_text:
+                parts.append(page_text)
+    finally:
+        doc.close()
+    return "\n".join(parts)
+
+
+# ---------- engine: tesseract (fallback / opt-in) ----------
+
+def _ocr_with_tesseract(source: Path, timeout_seconds: int) -> str:
+    """Run ocrmypdf, then pypdf-extract the resulting PDF's text."""
+    import ocrmypdf
+    from pypdf import PdfReader
 
     with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
         out_path = Path(tmp.name)
@@ -62,26 +127,11 @@ def ocr_pdf(source: Path, *, timeout_seconds: int = 120) -> str:
         ocrmypdf.ocr(
             input_file=str(source),
             output_file=str(out_path),
-            # `skip-text` skips pages that already have text and OCRs the
-            # rest. Better than `force-ocr` because some PDFs are mixed
-            # born-digital + scanned and we don't want to re-OCR what's
-            # already extractable.
             skip_text=True,
-            # Hard cap so a pathological multi-thousand-page PDF can't
-            # hold the watcher hostage. Without this, ocrmypdf will work
-            # for as long as it takes.
             timeout=timeout_seconds,
-            # Suppress reportlab telemetry noise on stderr.
             progress_bar=False,
             quiet=True,
         )
-    except Exception as exc:  # noqa: BLE001 — ocrmypdf raises a wide variety of exceptions
-        out_path.unlink(missing_ok=True)
-        raise OCRError(f"ocrmypdf failed: {exc}") from exc
-
-    try:
-        from pypdf import PdfReader
-
         reader = PdfReader(str(out_path))
         parts: list[str] = []
         for page in reader.pages:
@@ -90,5 +140,32 @@ def ocr_pdf(source: Path, *, timeout_seconds: int = 120) -> str:
             except Exception:
                 continue
         return "\n".join(p for p in parts if p)
+    except Exception as exc:  # noqa: BLE001
+        raise OCRError(f"ocrmypdf failed: {exc}") from exc
     finally:
         out_path.unlink(missing_ok=True)
+
+
+# ---------- public dispatcher ----------
+
+def ocr_pdf(source: Path, *, engine: str = "auto", timeout_seconds: int = 120) -> str:
+    """Run OCR on `source` and return the concatenated recognized text.
+
+    Args:
+        source: PDF to OCR.
+        engine: `auto` | `rapidocr` | `tesseract`. Default `auto` picks
+            the best available.
+        timeout_seconds: Hard cap on tesseract (rapidocr is fast enough
+            we don't bother). A multi-thousand-page PDF could otherwise
+            hold the watcher hostage.
+
+    Returns:
+        Text extracted from all pages, newline-joined.
+
+    Raises:
+        OCRError: When no engine is available or the chosen engine fails.
+    """
+    resolved = _resolve_engine(engine)
+    if resolved == "rapidocr":
+        return _ocr_with_rapidocr(source)
+    return _ocr_with_tesseract(source, timeout_seconds)

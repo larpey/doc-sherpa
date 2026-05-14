@@ -32,18 +32,18 @@ RUN pip install --no-cache-dir --upgrade pip \
         pydantic-settings \
         python-multipart \
         anthropic \
-        ocrmypdf \
         pypdf \
-        pyyaml
+        pyyaml \
+        rapidocr-onnxruntime \
+        pypdfium2
 
 # ---------- runtime ----------
 FROM python:3.12-slim
 
-# Tesseract for OCR + ghostscript for ocrmypdf's PDF/A output.
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    tesseract-ocr \
-    ghostscript \
-    && rm -rf /var/lib/apt/lists/*
+# RapidOCR + pypdfium2 cover the OCR path with no system deps. We no
+# longer bundle tesseract by default — it's an opt-in for installs that
+# need it (install at runtime with `apt install tesseract-ocr` and
+# `pip install ocrmypdf`).
 
 COPY --from=build /opt/venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
@@ -67,7 +67,9 @@ VOLUME ["/data", "/incoming", "/classified"]
 
 ENV RUNTIME_ENGINE_WATCH_DIR=/incoming \
     RUNTIME_ENGINE_DESTINATION_ROOT=/classified \
-    RUNTIME_ENGINE_DB_PATH=/data/runtime.db
+    RUNTIME_ENGINE_DB_PATH=/data/runtime.db \
+    RUNTIME_ENGINE_OCR_ENGINE=rapidocr \
+    RUNTIME_ENGINE_WATCHER_PARALLELISM=2
 
 EXPOSE 8002
 

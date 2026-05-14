@@ -18,12 +18,22 @@ dependencies = [
     "pydantic-settings>=2.6",
     "python-multipart>=0.0.12",
     "anthropic>=0.40",
-    "ocrmypdf>=16.0",
     "pypdf>=4.0",
     "pyyaml>=6.0",
 ]
 
 [project.optional-dependencies]
+# Default-recommended OCR stack. ONNX-based, multi-threaded, no system deps.
+# Pull this in unless you specifically want the tesseract path.
+rapidocr = [
+    "rapidocr-onnxruntime>=1.3",
+    "pypdfium2>=4.20",
+]
+# Legacy OCR path — requires the host's tesseract binary on PATH.
+# Kept as an opt-in so installs that already have tesseract can use it.
+tesseract = [
+    "ocrmypdf>=16.0",
+]
 dev = [
     "pytest>=8.3",
     "pytest-asyncio>=0.24",
