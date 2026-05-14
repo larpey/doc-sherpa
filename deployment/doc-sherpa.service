@@ -1,0 +1,42 @@
+# systemd unit for the Doc Sherpa runtime engine.
+#
+# Install:
+#   sudo cp deployment/doc-sherpa.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now doc-sherpa
+#
+# Assumes:
+# - app installed under /opt/doc-sherpa
+# - venv at /opt/doc-sherpa/.venv
+# - data dir at /var/lib/doc-sherpa (created by ExecStartPre)
+# - dedicated user `doc-sherpa` (useradd -r doc-sherpa)
+
+[Unit]
+Description=Doc Sherpa runtime engine
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=doc-sherpa
+Group=doc-sherpa
+WorkingDirectory=/opt/doc-sherpa
+Environment=PATH=/opt/doc-sherpa/.venv/bin:/usr/local/bin:/usr/bin:/bin
+Environment=RUNTIME_ENGINE_DB_PATH=/var/lib/doc-sherpa/runtime.db
+ExecStartPre=/bin/mkdir -p /var/lib/doc-sherpa
+ExecStartPre=/bin/chown doc-sherpa:doc-sherpa /var/lib/doc-sherpa
+ExecStart=/opt/doc-sherpa/.venv/bin/uvicorn runtime_engine.main:app \
+    --app-dir /opt/doc-sherpa/runtime-engine \
+    --host 0.0.0.0 --port 8002
+Restart=on-failure
+RestartSec=5
+
+# Hardening — the service doesn't need most of the filesystem.
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+NoNewPrivileges=true
+ReadWritePaths=/var/lib/doc-sherpa
+
+[Install]
+WantedBy=multi-user.target

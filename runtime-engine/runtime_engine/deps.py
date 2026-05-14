@@ -32,18 +32,42 @@ def _packs_dir() -> Path:
     return Path(__file__).resolve().parents[2] / "packs"
 
 
+_packs_mtime_at_load: float = 0.0
+
+
+def _packs_mtime_max() -> float:
+    """Latest mtime across the active packs + base. 0 if dir missing."""
+    pdir = _packs_dir()
+    if not pdir.exists():
+        return 0.0
+    candidates = [pdir / "_base.yaml"] + [pdir / f"{p}.yaml" for p in settings.active_packs]
+    latest = 0.0
+    for c in candidates:
+        try:
+            latest = max(latest, c.stat().st_mtime)
+        except OSError:
+            continue
+    return latest
+
+
 def get_kb() -> KnowledgeBase:
     """Return pack KB merged with the local overlay.
 
-    Cached for the process; invalidate via `invalidate_kb_cache()` after
-    a correction writes new overlay rows so the next classification
-    picks up what was just learned.
+    Cached for the process; invalidated automatically when any active
+    pack YAML's mtime changes (operator edited a pack), or manually via
+    `invalidate_kb_cache()` after the overlay receives new rows.
     """
-    global _kb
+    global _kb, _packs_mtime_at_load
+    current_mtime = _packs_mtime_max()
+    if _kb is not None and current_mtime > _packs_mtime_at_load:
+        # Operator edited a pack file — reload from scratch.
+        _kb = None
+
     if _kb is None:
         _kb = load_kb(_packs_dir(), include=list(settings.active_packs))
         overlay_module.init_overlay(settings.db_path)
         overlay_module.merge_overlay_into(_kb, settings.db_path)
+        _packs_mtime_at_load = current_mtime
     return _kb
 
 

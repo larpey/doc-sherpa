@@ -47,17 +47,38 @@ class FilesystemDestination:
         """Copy `source` to `<root>/<destination_path>`.
 
         `destination_path` is a POSIX-style relative path. We split on
-        `/` and rejoin with the host's separator so Windows clients get
-        the path they expect.
+        `/` and rejoin with the host's separator. Path segments are
+        validated against `..` and absolute roots to prevent traversal
+        outside `self._root` — a crafted classification result must
+        never write outside the configured destination tree.
 
         Returns the absolute final path as a string — used in
         notifications and audit logs so operators can find the file.
         """
-        parts = [p for p in destination_path.split("/") if p]
+        # Reject absolute-root prefixes before splitting — a leading
+        # slash means "from filesystem root," which is always wrong.
+        if destination_path.startswith(("/", "\\")):
+            raise DestinationError(f"destination must be relative, not {destination_path!r}")
+        parts = [p for p in destination_path.replace("\\", "/").split("/") if p]
         if not parts:
             raise DestinationError("empty destination path")
+        # Reject traversal attempts at the segment level — `..`, `.`,
+        # and Windows drive prefixes must not be reachable.
+        for segment in parts:
+            if segment in {"..", "."} or ":" in segment:
+                raise DestinationError(f"unsafe destination segment: {segment!r}")
 
         target = self._root.joinpath(*parts)
+        # Belt-and-suspenders: after resolving, confirm we're still under root.
+        try:
+            resolved = target.resolve(strict=False)
+            if not resolved.is_relative_to(self._root):
+                raise DestinationError(
+                    f"destination escapes root: {resolved} not under {self._root}"
+                )
+        except (OSError, ValueError) as exc:
+            raise DestinationError(f"could not resolve target path: {exc}") from exc
+
         target_parent = target.parent
 
         if not target_parent.exists():

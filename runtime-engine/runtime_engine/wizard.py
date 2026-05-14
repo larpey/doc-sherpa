@@ -52,7 +52,12 @@ def load(data_dir: Path) -> WizardConfig | None:
 
 
 def save(data_dir: Path, cfg: WizardConfig) -> None:
-    """Persist the config. Creates `data_dir` if missing."""
+    """Persist the config. Creates `data_dir` if missing.
+
+    Restricts file permissions to the owner only (0600 on POSIX). On
+    Windows the chmod is a no-op for these bits, but file ACLs from the
+    parent dir provide equivalent protection.
+    """
     data_dir.mkdir(parents=True, exist_ok=True)
     payload = {
         "watch_dir": str(cfg.watch_dir),
@@ -60,9 +65,13 @@ def save(data_dir: Path, cfg: WizardConfig) -> None:
         "active_packs": list(cfg.active_packs),
         "auto_create_folders": cfg.auto_create_folders,
     }
-    _config_path(data_dir).write_text(
-        yaml.safe_dump(payload, sort_keys=False), encoding="utf-8"
-    )
+    config_path = _config_path(data_dir)
+    config_path.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
+    try:
+        config_path.chmod(0o600)
+    except OSError:
+        # Best-effort on filesystems that don't support POSIX modes.
+        pass
 
 
 def validate_paths(cfg: WizardConfig) -> list[str]:

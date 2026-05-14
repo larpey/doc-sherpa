@@ -18,12 +18,9 @@ the dependency-injection layer, invalidate on writes.
 from __future__ import annotations
 
 import json
-import sqlite3
-from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterator
 
 from shared.types import (
     DocTypeDefinition,
@@ -31,6 +28,11 @@ from shared.types import (
     KnowledgeBase,
     VendorDefinition,
 )
+
+# Single source of truth for SQLite connection semantics. The overlay
+# tables live in the same DB as the classification log; they must share
+# the same isolation / FK-on / row-factory settings.
+from .db import connect
 
 # Bounds on per-keyword weight. Starting weight is conservative — a single
 # correction shouldn't dominate the classifier. Reinforcement pushes it up,
@@ -70,19 +72,8 @@ CREATE TABLE IF NOT EXISTS overlay_doc_types (
 def init_overlay(db_path: Path) -> None:
     """Create the overlay tables. Idempotent. Lives in the same DB as the log."""
     db_path.parent.mkdir(parents=True, exist_ok=True)
-    with sqlite3.connect(db_path) as conn:
+    with connect(db_path) as conn:
         conn.executescript(_SCHEMA)
-        conn.commit()
-
-
-@contextmanager
-def _connect(db_path: Path) -> Iterator[sqlite3.Connection]:
-    conn = sqlite3.connect(db_path, isolation_level=None)
-    conn.row_factory = sqlite3.Row
-    try:
-        yield conn
-    finally:
-        conn.close()
 
 
 def _now() -> str:
@@ -99,7 +90,7 @@ def upsert_keyword(db_path: Path, doc_type: str, phrase: str) -> None:
     evidence_count incremented.
     """
     now = _now()
-    with _connect(db_path) as conn:
+    with connect(db_path) as conn:
         existing = conn.execute(
             "SELECT weight, evidence_count FROM overlay_keywords WHERE doc_type = ? AND phrase = ?",
             (doc_type, phrase),
@@ -140,7 +131,7 @@ def upsert_vendor(
     as sets; nothing is removed by this call.
     """
     now = _now()
-    with _connect(db_path) as conn:
+    with connect(db_path) as conn:
         existing = conn.execute(
             "SELECT aliases_json, likely_doc_types_json, evidence_count "
             "FROM overlay_vendors WHERE canonical = ?",
@@ -192,7 +183,7 @@ class _LearnedKeyword:
 
 
 def list_learned_keywords(db_path: Path) -> list[_LearnedKeyword]:
-    with _connect(db_path) as conn:
+    with connect(db_path) as conn:
         rows = conn.execute(
             "SELECT doc_type, phrase, weight FROM overlay_keywords"
         ).fetchall()
@@ -201,7 +192,7 @@ def list_learned_keywords(db_path: Path) -> list[_LearnedKeyword]:
 
 def list_learned_vendors(db_path: Path) -> list[VendorDefinition]:
     """Reify overlay vendors as VendorDefinition objects."""
-    with _connect(db_path) as conn:
+    with connect(db_path) as conn:
         rows = conn.execute(
             """
             SELECT canonical, aliases_json, likely_doc_types_json

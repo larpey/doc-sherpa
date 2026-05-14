@@ -12,9 +12,14 @@ extraction don't trigger it.
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 from pypdf import PdfReader
+
+from . import ocr as ocr_module
+
+logger = logging.getLogger(__name__)
 
 # Heuristic: if pypdf extracts fewer than this many characters of text,
 # treat the PDF as scanned and fall through to OCR. Scanned pages often
@@ -28,13 +33,8 @@ class TextExtractionError(Exception):
     """Raised when neither born-digital nor OCR paths could yield text."""
 
 
-def extract_text(path: Path) -> str:
-    """Return the concatenated text of `path`.
-
-    Returns the empty string for PDFs that contain no extractable text
-    AND for which OCR is not yet wired. Callers should treat empty as
-    "skip classification, route to unclassified."
-    """
+def _extract_born_digital(path: Path) -> str:
+    """Pull text out of a born-digital PDF (no OCR). May return empty."""
     try:
         reader = PdfReader(str(path))
     except Exception as exc:
@@ -47,13 +47,38 @@ def extract_text(path: Path) -> str:
         except Exception:
             # A single bad page should not poison the whole document.
             continue
+    return "\n".join(p for p in parts if p)
 
-    text = "\n".join(p for p in parts if p)
-    if len(text.strip()) >= _OCR_FALLBACK_THRESHOLD_CHARS:
-        return text
 
-    # Scanned PDF or near-empty extraction. OCR fallback is the right
-    # answer; not wired in this slice. Return what little we have so
-    # downstream classification has *something* to work with — but
-    # the caller should expect a low-confidence classification.
-    return text
+def extract_text(path: Path) -> str:
+    """Return the concatenated text of `path`, OCR'ing if needed.
+
+    Born-digital first (fast). If that yields too little, fall through to
+    OCR via tesseract. If OCR is unavailable or fails, returns whatever
+    born-digital extraction produced (possibly empty) — callers handle
+    empty as "route to unclassified."
+    """
+    born_digital = _extract_born_digital(path)
+    if len(born_digital.strip()) >= _OCR_FALLBACK_THRESHOLD_CHARS:
+        return born_digital
+
+    if not ocr_module.is_available():
+        # OCR not installed. Log once at WARNING; the user already saw
+        # this in the install docs but it bears repeating in logs the
+        # day they hit their first scanned doc.
+        logger.warning(
+            "OCR not available for %s — install tesseract + ocrmypdf to "
+            "classify scanned PDFs; falling back to empty text",
+            path.name,
+        )
+        return born_digital
+
+    try:
+        ocred = ocr_module.ocr_pdf(path)
+    except ocr_module.OCRError as exc:
+        logger.warning("OCR failed on %s: %s", path.name, exc)
+        return born_digital
+
+    # Pick the longer of the two — sometimes OCR misreads a born-digital
+    # page; sometimes pypdf misses text on a mixed PDF.
+    return ocred if len(ocred.strip()) > len(born_digital.strip()) else born_digital

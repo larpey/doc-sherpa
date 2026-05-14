@@ -21,6 +21,7 @@ CREATE TABLE IF NOT EXISTS classifications (
     id                  TEXT PRIMARY KEY,
     source_path         TEXT NOT NULL,
     source_filename     TEXT NOT NULL,
+    content_sha256      TEXT,             -- SHA-256 of the source bytes; NULL on legacy rows
     final_path          TEXT,             -- absolute destination path, NULL on error
     destination_path    TEXT,             -- relative path under root
     doc_type            TEXT,
@@ -41,16 +42,35 @@ CREATE TABLE IF NOT EXISTS classifications (
 CREATE UNIQUE INDEX IF NOT EXISTS uq_classifications_source
     ON classifications(source_path);
 
+CREATE INDEX IF NOT EXISTS idx_classifications_content_hash
+    ON classifications(content_sha256);
+
 CREATE INDEX IF NOT EXISTS idx_classifications_status
     ON classifications(status, processed_at DESC);
 """
 
 
+def _migrate_add_content_hash(conn) -> None:
+    """Add `content_sha256` to legacy DBs created before this column existed."""
+    cols = [row[1] for row in conn.execute("PRAGMA table_info(classifications)").fetchall()]
+    if "content_sha256" not in cols:
+        conn.execute("ALTER TABLE classifications ADD COLUMN content_sha256 TEXT")
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_classifications_content_hash "
+            "ON classifications(content_sha256)"
+        )
+
+
 def init_db(db_path: Path) -> None:
-    """Create the SQLite DB file and apply the schema. Idempotent."""
+    """Create the SQLite DB file and apply the schema. Idempotent.
+
+    Also runs lightweight column-add migrations for backward compatibility
+    with DBs created by earlier versions of the runtime.
+    """
     db_path.parent.mkdir(parents=True, exist_ok=True)
     with sqlite3.connect(db_path) as conn:
         conn.executescript(_SCHEMA)
+        _migrate_add_content_hash(conn)
         conn.commit()
 
 

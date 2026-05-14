@@ -22,6 +22,7 @@ from pathlib import Path
 from shared.types import KnowledgeBase
 
 from . import log as log_module
+from .hashing import file_sha256
 from .pipeline import process_document
 from .router import RoutingConfig
 
@@ -33,28 +34,34 @@ def _is_pdf(path: Path) -> bool:
 
 
 def _is_stable(path: Path, threshold_seconds: float) -> bool:
-    """Return True if `path`'s size is unchanged across the threshold window.
+    """Return True if `path` has been untouched for at least `threshold_seconds`.
 
-    Guards against picking up half-written files. Two sizes taken
-    `threshold` apart — same → stable; different → still being written,
-    skip this cycle and try again next pass.
+    Guards against picking up half-written files. Uses mtime *age*
+    rather than a "size-now vs size-after-sleep" check so the watcher
+    doesn't block the event loop sleeping inside the scan pass.
+
+    A file whose mtime is older than `now - threshold` is treated as
+    stable. A still-being-written file's mtime is constantly bumped, so
+    it remains unstable until the writer finishes.
     """
     if not path.exists():
         return False
     try:
-        size_before = path.stat().st_size
+        stat = path.stat()
     except OSError:
         return False
-    time.sleep(threshold_seconds)
-    try:
-        size_after = path.stat().st_size
-    except OSError:
+    if stat.st_size <= 0:
         return False
-    return size_before == size_after and size_before > 0
+    age_seconds = time.time() - stat.st_mtime
+    return age_seconds >= threshold_seconds
 
 
 def _already_processed(db_path: Path, source: Path) -> bool:
     return log_module.get_by_source(db_path, str(source)) is not None
+
+
+def _content_already_processed(db_path: Path, content_hash: str) -> bool:
+    return log_module.get_by_content_hash(db_path, content_hash) is not None
 
 
 def scan_once(
@@ -67,6 +74,7 @@ def scan_once(
     stability_seconds: float = 0.0,
     delete_source_after_place: bool = False,
     ai_fallback=None,
+    auto_confirm_threshold: float = 1.1,
 ) -> list[log_module.LogEntry]:
     """One pass over `watch_dir`. Returns the entries created this pass.
 
@@ -85,8 +93,24 @@ def scan_once(
         if stability_seconds > 0 and not _is_stable(path, stability_seconds):
             continue
 
+        # Content-hash dedup: same bytes under a different filename
+        # shouldn't be re-classified. We hash before pipelining so we
+        # avoid the OCR / LLM cost on duplicates.
+        try:
+            content_hash = file_sha256(path)
+        except OSError:
+            content_hash = None
+        if content_hash and _content_already_processed(db_path, content_hash):
+            logger.info("watcher: skipping duplicate content for %s", path.name)
+            continue
+
         result = process_document(path, kb, routing_config, destination, ai_fallback=ai_fallback)
-        entry = log_module.record_result(db_path, result)
+        entry = log_module.record_result(
+            db_path,
+            result,
+            content_sha256=content_hash,
+            auto_confirm_threshold=auto_confirm_threshold,
+        )
         new_entries.append(entry)
 
         if delete_source_after_place and result.final_path and not result.error:
@@ -109,6 +133,7 @@ async def run_loop(
     stability_seconds: float,
     delete_source_after_place: bool,
     ai_fallback=None,
+    auto_confirm_threshold: float = 1.1,
 ) -> None:
     """Run `scan_once` forever, sleeping `poll_interval_seconds` between passes.
 
@@ -127,6 +152,7 @@ async def run_loop(
                 stability_seconds=stability_seconds,
                 delete_source_after_place=delete_source_after_place,
                 ai_fallback=ai_fallback,
+                auto_confirm_threshold=auto_confirm_threshold,
             )
             if entries:
                 logger.info("watcher: processed %d new document(s)", len(entries))

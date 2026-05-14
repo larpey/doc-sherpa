@@ -51,8 +51,29 @@ class RuntimeEngineSettings(BaseSettings):
         description="Industry packs to load alongside _base.yaml.",
     )
 
+    # --- security ---------------------------------------------------------
+    auth_token: str | None = Field(
+        default=None,
+        description=(
+            "If set, every request (except /healthz) must carry an "
+            "`Authorization: Bearer <token>` header matching this value. "
+            "Default None = LAN-only mode, no auth. Production deployments "
+            "set this to a high-entropy random string."
+        ),
+    )
+
     # --- routing ----------------------------------------------------------
     confidence_threshold: float = Field(default=0.30, ge=0.0, le=1.0)
+    auto_confirm_threshold: float = Field(
+        default=0.85,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Above this confidence, classifications are auto-accepted and "
+            "don't appear in the review queue. Lower it to be cautious, "
+            "raise it to be lazy."
+        ),
+    )
     auto_create_folders: bool = Field(default=True)
     routing_template: str = Field(
         default="{doc_type}/{year}/{vendor}_{identifier}.pdf",

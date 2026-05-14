@@ -68,6 +68,14 @@ header .subtitle { color: #666; font-size: 0.85rem; margin: 0.1rem 0 0; }
 .status-tag.corrected { background: #cfe2ff; color: #0a4ba3; }
 .status-tag.error     { background: #f8d7da; color: #721c24; }
 .empty { color: #888; font-style: italic; }
+.filter-bar { padding: 0.5rem 1.5rem 0; background: #fff; border-bottom: 1px solid #e0e3e7;
+              display: flex; gap: 0.5rem; }
+.filter-pill { padding: 0.25rem 0.7rem; border-radius: 999px; color: #555;
+               text-decoration: none; font-size: 0.85rem; border: 1px solid transparent; }
+.filter-pill:hover { background: #eef1f5; }
+.filter-pill.active { background: #1a1a1a; color: #fff; }
+.pager { margin-top: 1rem; padding: 0.6rem; text-align: center; color: #888; font-size: 0.9rem; }
+.pager a { color: #0366d6; text-decoration: none; margin: 0 0.4rem; }
 
 .folder { display: block; padding: 0.35rem 0.6rem; border-radius: 4px; margin: 0.1rem 0;
           cursor: default; font-size: 0.9rem; user-select: none; }
@@ -280,10 +288,37 @@ def _render_folder(folder: dict) -> str:
     )
 
 
+def _filter_bar(status_filter: str | None) -> str:
+    """Status filter pills + a clear-filter link when one is set."""
+    pills = ""
+    for label, value in [("All", None), ("Pending", "pending"), ("Accepted", "accepted"),
+                          ("Corrected", "corrected"), ("Error", "error")]:
+        active = " active" if status_filter == value else ""
+        href = "/" if value is None else f"/?status_filter={value}"
+        pills += f"<a class='filter-pill{active}' href='{href}'>{label}</a>"
+    return f"<div class='filter-bar'>{pills}</div>"
+
+
+def _pager(page: int, per_page: int, num_entries: int, status_filter: str | None) -> str:
+    """Prev / next links. `num_entries < per_page` means we're on the last page."""
+    qs = f"&status_filter={status_filter}" if status_filter else ""
+    parts = []
+    if page > 1:
+        parts.append(f"<a href='/?page={page - 1}&per_page={per_page}{qs}'>&laquo; prev</a>")
+    parts.append(f"<span>page {page}</span>")
+    if num_entries >= per_page:
+        parts.append(f"<a href='/?page={page + 1}&per_page={per_page}{qs}'>next &raquo;</a>")
+    return f"<div class='pager'>{' &middot; '.join(parts)}</div>"
+
+
 def render_inbox(
     entries: list[LogEntry],
     doc_types: list[str],
     folder_tree: list[dict],
+    *,
+    page: int = 1,
+    per_page: int = 50,
+    status_filter: str | None = None,
 ) -> str:
     """Main page: inbox on the left, folder tree on the right."""
     if entries:
@@ -306,8 +341,9 @@ def render_inbox(
       <h1>Doc Sherpa — inbox</h1>
       <p class='subtitle'>Drag a doc onto a folder to correct + file. Or use the buttons.</p>
     </header>
+    {_filter_bar(status_filter)}
     <div class='layout'>
-      <main class='inbox'>{inbox_html}</main>
+      <main class='inbox'>{inbox_html}{_pager(page, per_page, len(entries), status_filter)}</main>
       <aside class='tree-pane'>
         <h2>Destination folders</h2>
         {tree_html}

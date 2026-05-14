@@ -1,0 +1,33 @@
+# Doc Sherpa runtime engine — one-command deploy.
+#
+# Usage:
+#   docker compose up -d
+#
+# Then visit http://localhost:8002. Drop PDFs in ./scans/incoming;
+# classified files appear under ./scans/classified.
+
+services:
+  runtime-engine:
+    build: .
+    image: doc-sherpa:latest
+    container_name: doc-sherpa
+    restart: unless-stopped
+    ports:
+      - "8002:8002"
+    volumes:
+      - ./scans/incoming:/incoming
+      - ./scans/classified:/classified
+      - ./data:/data
+    environment:
+      # Uncomment to enable LLM fallback for novel docs:
+      # ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY}"
+      #
+      # Uncomment to require a bearer token on the HTTP surface:
+      # RUNTIME_ENGINE_AUTH_TOKEN: "${DOC_SHERPA_TOKEN}"
+
+      RUNTIME_ENGINE_ACTIVE_PACKS: "logistics,healthcare"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8002/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
