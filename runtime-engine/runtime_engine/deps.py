@@ -14,6 +14,7 @@ from plugins.document_destination import FilesystemDestination
 from runtime_engine.kb import load_kb
 from shared.types import KnowledgeBase
 
+from . import overlay as overlay_module
 from .router import RoutingConfig
 from .settings import settings
 
@@ -29,10 +30,24 @@ def _packs_dir() -> Path:
 
 
 def get_kb() -> KnowledgeBase:
+    """Return pack KB merged with the local overlay.
+
+    Cached for the process; invalidate via `invalidate_kb_cache()` after
+    a correction writes new overlay rows so the next classification
+    picks up what was just learned.
+    """
     global _kb
     if _kb is None:
         _kb = load_kb(_packs_dir(), include=list(settings.active_packs))
+        overlay_module.init_overlay(settings.db_path)
+        overlay_module.merge_overlay_into(_kb, settings.db_path)
     return _kb
+
+
+def invalidate_kb_cache() -> None:
+    """Drop the cached KB so the next `get_kb()` rebuilds with fresh overlay."""
+    global _kb
+    _kb = None
 
 
 def get_routing_config() -> RoutingConfig:

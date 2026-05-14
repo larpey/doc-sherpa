@@ -198,14 +198,18 @@ def apply_correction(
     routing_config: RoutingConfig,
     destination,  # DocumentDestination
     note: str | None = None,
+    learn: bool = True,
 ) -> LogEntry:
-    """Move the file to the corrected location and update the row.
+    """Move the file to the corrected location, update the row, and teach.
 
     We re-render the destination using the corrected classification, ask
     the plugin to place a copy at the new location, and delete the file
     at the old location only after the new write succeeds (atomicity:
     one file always exists). The original `source_path` is left alone
     — the operator may want to re-process it later.
+
+    If `learn` is True (default), also writes overlay rows so the next
+    similar doc benefits from this correction.
     """
     entry = get(db_path, entry_id)
     if entry is None:
@@ -224,12 +228,13 @@ def apply_correction(
     new_dest_path = render_destination(corrected, Path(entry.source_path), routing_config)
     new_final_path = destination.place(Path(entry.final_path), new_dest_path)
 
+    old_final_path = entry.final_path
     # Delete the old file only if the new path is different — placing to
     # the same path with a collision-rename would give a different
     # `new_final_path` and we want to clean up the original.
-    if new_final_path != entry.final_path:
+    if new_final_path != old_final_path:
         try:
-            Path(entry.final_path).unlink()
+            Path(old_final_path).unlink()
         except OSError:
             # If we can't delete, leave it — duplicate is recoverable.
             pass
@@ -249,6 +254,20 @@ def apply_correction(
             WHERE id = ?
             """,
             (new_doc_type, new_vendor, new_dest_path, new_final_path, note, now, entry_id),
+        )
+
+    if learn:
+        # Late import: log.py is imported by deps.py indirectly; the
+        # learning module needs neither, but circular import paranoia is
+        # cheaper than the dependency archaeology to prove it's safe.
+        from . import learning as learning_module
+        learning_module.apply_correction_to_overlay(
+            overlay_db=db_path,
+            source_text_path=Path(new_final_path),
+            new_doc_type=new_doc_type,
+            new_vendor=new_vendor,
+            old_doc_type=entry.doc_type,
+            old_vendor=entry.vendor,
         )
 
     return get(db_path, entry_id)  # type: ignore[return-value]

@@ -7,7 +7,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse, Response
 
 from . import log as log_module
 from . import templates
-from .deps import get_destination, get_kb, get_routing_config
+from .deps import get_destination, get_kb, get_routing_config, invalidate_kb_cache
 from .settings import settings
 
 router = APIRouter()
@@ -65,4 +65,7 @@ def correct(
         routing_config=get_routing_config(),
         destination=get_destination(),
     )
+    # Correction may have added overlay keywords / vendors — invalidate
+    # the cached KB so the next classification picks them up.
+    invalidate_kb_cache()
     return RedirectResponse(url="/", status_code=status.HTTP_303_SEE_OTHER)

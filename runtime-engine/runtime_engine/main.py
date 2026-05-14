@@ -19,6 +19,7 @@ from fastapi import FastAPI
 
 from .db import init_db
 from .deps import get_destination, get_kb, get_routing_config
+from .overlay import init_overlay
 from .routes import router
 from .settings import settings
 from .watcher import run_loop
@@ -30,6 +31,7 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Initialize storage, load KB, start watcher, hand control to the app."""
     init_db(settings.db_path)
+    init_overlay(settings.db_path)
     settings.watch_dir.mkdir(parents=True, exist_ok=True)
     settings.destination_root.mkdir(parents=True, exist_ok=True)
 
