@@ -66,6 +66,7 @@ def scan_once(
     destination,  # DocumentDestination
     stability_seconds: float = 0.0,
     delete_source_after_place: bool = False,
+    ai_fallback=None,
 ) -> list[log_module.LogEntry]:
     """One pass over `watch_dir`. Returns the entries created this pass.
 
@@ -84,7 +85,7 @@ def scan_once(
         if stability_seconds > 0 and not _is_stable(path, stability_seconds):
             continue
 
-        result = process_document(path, kb, routing_config, destination)
+        result = process_document(path, kb, routing_config, destination, ai_fallback=ai_fallback)
         entry = log_module.record_result(db_path, result)
         new_entries.append(entry)
 
@@ -107,6 +108,7 @@ async def run_loop(
     poll_interval_seconds: float,
     stability_seconds: float,
     delete_source_after_place: bool,
+    ai_fallback=None,
 ) -> None:
     """Run `scan_once` forever, sleeping `poll_interval_seconds` between passes.
 
@@ -124,6 +126,7 @@ async def run_loop(
                 destination=destination,
                 stability_seconds=stability_seconds,
                 delete_source_after_place=delete_source_after_place,
+                ai_fallback=ai_fallback,
             )
             if entries:
                 logger.info("watcher: processed %d new document(s)", len(entries))

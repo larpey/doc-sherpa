@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from plugins.ai_classifier import ClaudeClassifier
+from plugins.ai_classifier.claude import is_available as llm_available
 from plugins.document_destination import FilesystemDestination
 from runtime_engine.kb import load_kb
 from shared.types import KnowledgeBase
@@ -21,6 +23,7 @@ from .settings import settings
 _kb: KnowledgeBase | None = None
 _routing_config: RoutingConfig | None = None
 _destination: FilesystemDestination | None = None
+_ai_fallback: ClaudeClassifier | None = None
 
 
 def _packs_dir() -> Path:
@@ -61,6 +64,20 @@ def get_routing_config() -> RoutingConfig:
     return _routing_config
 
 
+def get_ai_fallback() -> ClaudeClassifier | None:
+    """Return the LLM fallback plugin, or None if not configured.
+
+    A `None` return means the pipeline runs without an LLM safety net —
+    fine for installs that don't want to send OCR text to Anthropic.
+    """
+    global _ai_fallback
+    if not llm_available():
+        return None
+    if _ai_fallback is None:
+        _ai_fallback = ClaudeClassifier()
+    return _ai_fallback
+
+
 def get_destination() -> FilesystemDestination:
     global _destination
     if _destination is None:
@@ -73,7 +90,13 @@ def get_destination() -> FilesystemDestination:
 
 def reset_all() -> None:
     """Drop all cached singletons. Used in tests."""
-    global _kb, _routing_config, _destination
+    global _kb, _routing_config, _destination, _ai_fallback
     _kb = None
     _routing_config = None
     _destination = None
+    _ai_fallback = None
+
+
+def invalidate_all() -> None:
+    """Alias of reset_all for the setup-wizard path. Same effect, clearer at the call site."""
+    reset_all()

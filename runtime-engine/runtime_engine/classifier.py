@@ -131,6 +131,8 @@ def classify(ocr_text: str, kb: KnowledgeBase) -> Classification:
     ranked = sorted(scores.items(), key=lambda kv: kv[1], reverse=True)
     top_name, top_score = ranked[0]
     runner_up_name, runner_up_score = (ranked[1] if len(ranked) > 1 else (None, 0.0))
+    # Up to 3 alternatives (positions 2, 3, 4 — skip the winner itself).
+    alternatives = tuple(ranked[1:4])
 
     return Classification(
         doc_type=top_name,
@@ -139,4 +141,5 @@ def classify(ocr_text: str, kb: KnowledgeBase) -> Classification:
         confidence=_confidence(top_score, runner_up_score),
         signals=tuple(signals),
         runner_up=runner_up_name,
+        alternatives=alternatives,
     )

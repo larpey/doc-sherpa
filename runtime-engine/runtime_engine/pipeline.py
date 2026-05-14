@@ -25,6 +25,11 @@ from .extractor import extract_fields
 from .router import RoutingConfig, is_unclassified, render_destination
 from .text_extract import extract_text
 
+# Threshold below which we ask the LLM for a second opinion. Above the
+# threshold the keyword classifier is trusted; calling the LLM would
+# waste a call.
+_LLM_FALLBACK_THRESHOLD = 0.35
+
 
 @dataclass(frozen=True, slots=True)
 class ProcessResult:
@@ -49,12 +54,17 @@ def process_document(
     kb: KnowledgeBase,
     config: RoutingConfig,
     destination,  # DocumentDestination — structural; avoid circular type hint
+    ai_fallback=None,  # optional AIClassifier protocol instance
 ) -> ProcessResult:
     """Run one document through the full pipeline. Returns a ProcessResult.
 
     Errors do not raise — they're packaged into `ProcessResult.error` so
     the calling loop (watcher / batch processor) can decide whether to
     retry, alert, or move on without crashing.
+
+    `ai_fallback` is consulted only when keyword classification yields
+    low confidence. If the LLM disagrees with the keyword path AND
+    speaks with higher confidence, the LLM result is used.
     """
     try:
         text = extract_text(source_path)
@@ -72,9 +82,25 @@ def process_document(
         )
 
     classification = classify(text, kb)
+
+    # LLM fallback for low-confidence cases. Only call out when the
+    # keyword path is uncertain — high-confidence wins shouldn't pay
+    # for a network round-trip.
+    if ai_fallback is not None and classification.confidence < _LLM_FALLBACK_THRESHOLD:
+        llm_result = ai_fallback.classify(
+            text,
+            known_vendors=sorted(kb.vendors.keys()),
+            known_doc_types=sorted(kb.doc_types.keys()),
+        )
+        if llm_result is not None and llm_result.confidence > classification.confidence:
+            classification = llm_result
+
     if classification.doc_type:
         fields = extract_fields(text, kb, classification.doc_type, classification.vendor)
-        classification = replace(classification, fields=fields)
+        # Preserve LLM-extracted fields (e.g. llm_identifier) if any.
+        merged_fields = dict(classification.fields)
+        merged_fields.update(fields)
+        classification = replace(classification, fields=merged_fields)
 
     dest_path = render_destination(classification, source_path, config)
 

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from pydantic import Field
+from pydantic import ConfigDict, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -28,11 +28,15 @@ def _default_db_path() -> Path:
 class RuntimeEngineSettings(BaseSettings):
     """Knobs the operator sets via env / first-run wizard."""
 
+    # Allow the setup-wizard handler to mutate fields at runtime.
+    # Pydantic Settings models default to frozen-ish behavior; we want
+    # in-process writes to stick for the lifetime of the process.
     model_config = SettingsConfigDict(
         env_prefix="RUNTIME_ENGINE_",
         env_file=".env",
         env_file_encoding="utf-8",
         extra="ignore",
+        frozen=False,
     )
 
     # --- paths ------------------------------------------------------------

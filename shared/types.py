@@ -151,6 +151,10 @@ class Classification:
     Confidence is a calibrated 0.0–1.0 derived from the signal contributions
     and the gap to runner-up doc types. A near-tie produces low confidence
     even if the winner's absolute score is high.
+
+    `alternatives` carries the top-N runners-up (typically 3) with their
+    raw scores, so the inbox UI can show "if not this, then one of these"
+    options and the operator picks an alternative with one click.
     """
 
     doc_type: DocTypeName | None
@@ -159,6 +163,7 @@ class Classification:
     confidence: float
     signals: tuple[Signal, ...]
     runner_up: DocTypeName | None = None
+    alternatives: tuple[tuple[DocTypeName, float], ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
