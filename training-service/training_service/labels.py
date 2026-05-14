@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-from shared.types import DocumentType
+from shared.types import DocTypeName
 
 from .db import connect
 from .documents import Document, list_documents
@@ -24,10 +24,16 @@ from .documents import Document, list_documents
 
 @dataclass(frozen=True, slots=True)
 class StoredLabel:
-    """A persisted label row. Mirrors `shared.types.Label` plus its FK + timestamp."""
+    """A persisted label row.
+
+    `doc_type` is just a string keyed against the active KB's vocabulary —
+    no enum, because the vocabulary belongs to the deployment, not to the
+    product. Validation that the string is a known doc type lives in the
+    route handler that knows about the KB.
+    """
 
     document_id: str
-    doc_type: DocumentType
+    doc_type: DocTypeName
     vendor: str | None
     identifier: str | None
     customer: str | None
@@ -45,7 +51,7 @@ def _normalize(value: str | None) -> str | None:
 def _row_to_label(row: sqlite3.Row) -> StoredLabel:
     return StoredLabel(
         document_id=row["document_id"],
-        doc_type=DocumentType(row["doc_type"]),
+        doc_type=row["doc_type"],
         vendor=row["vendor"],
         identifier=row["identifier"],
         customer=row["customer"],
@@ -57,7 +63,7 @@ def upsert_label(
     *,
     db_path: Path,
     document_id: str,
-    doc_type: DocumentType,
+    doc_type: DocTypeName,
     vendor: str | None,
     identifier: str | None,
     customer: str | None,
@@ -79,7 +85,7 @@ def upsert_label(
                 customer   = excluded.customer,
                 labeled_at = excluded.labeled_at
             """,
-            (document_id, doc_type.value, v_vendor, v_identifier, v_customer, labeled_at),
+            (document_id, doc_type, v_vendor, v_identifier, v_customer, labeled_at),
         )
     return StoredLabel(
         document_id=document_id,

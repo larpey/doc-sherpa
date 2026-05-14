@@ -1,0 +1,117 @@
+# Base knowledge pack — universal business doc types.
+#
+# Every install loads this. Industry packs add to it, never replace it.
+# Keep entries here vocabulary that is genuinely industry-agnostic
+# (an invoice is an invoice everywhere); push industry-specific stuff
+# into the appropriate pack.
+
+version: 1
+metadata:
+  name: base
+  description: Universal business documents
+  industries: [all]
+
+doc_types:
+
+  - name: invoice
+    description: A request for payment, usually itemized
+    industries: [all]
+    keywords:
+      - { phrase: "INVOICE",         weight: 0.65 }   # appears on other types too
+      - { phrase: "AMOUNT DUE",      weight: 0.85 }
+      - { phrase: "BALANCE DUE",     weight: 0.85 }
+      - { phrase: "BILL TO",         weight: 0.70 }
+      - { phrase: "PAYMENT TERMS",   weight: 0.75 }
+      - { phrase: "REMITTANCE",      weight: 0.80 }
+      - { phrase: "NET 30",          weight: 0.55 }
+      - { phrase: "NET 60",          weight: 0.55 }
+    fields:
+      - name: invoice_number
+        required: true
+        extractor:
+          kind: labeled_value
+          labels: ["Invoice #", "Invoice Number", "Invoice No", "INV #", "INV-"]
+          shape: { kind: alphanumeric, min_length: 3, max_length: 30 }
+      - name: total
+        required: false
+        extractor:
+          kind: labeled_value
+          labels: ["Total", "Amount Due", "Balance Due", "Grand Total"]
+          shape: { kind: currency, min_length: 1, max_length: 20 }
+      - name: invoice_date
+        required: false
+        extractor:
+          kind: labeled_value
+          labels: ["Date", "Invoice Date", "Issue Date"]
+          shape: { kind: date, max_length: 30 }
+
+  - name: receipt
+    description: Proof of payment for a completed transaction
+    industries: [all]
+    keywords:
+      - { phrase: "RECEIPT",         weight: 0.85 }
+      - { phrase: "THANK YOU",       weight: 0.55 }
+      - { phrase: "AMOUNT PAID",     weight: 0.85 }
+      - { phrase: "PAYMENT RECEIVED",weight: 0.85 }
+      - { phrase: "CHANGE DUE",      weight: 0.70 }
+    fields:
+      - name: total
+        required: false
+        extractor:
+          kind: labeled_value
+          labels: ["Total", "Amount Paid", "Paid"]
+          shape: { kind: currency, max_length: 20 }
+
+  - name: statement
+    description: A periodic summary of activity / balance
+    industries: [all]
+    keywords:
+      - { phrase: "STATEMENT",            weight: 0.80 }
+      - { phrase: "ACCOUNT STATEMENT",    weight: 0.95 }
+      - { phrase: "BEGINNING BALANCE",    weight: 0.90 }
+      - { phrase: "ENDING BALANCE",       weight: 0.90 }
+      - { phrase: "STATEMENT PERIOD",     weight: 0.90 }
+    fields:
+      - name: ending_balance
+        required: false
+        extractor:
+          kind: labeled_value
+          labels: ["Ending Balance", "New Balance", "Current Balance"]
+          shape: { kind: currency, max_length: 20 }
+
+  - name: purchase_order
+    description: A buyer's commitment to purchase
+    industries: [all]
+    keywords:
+      - { phrase: "PURCHASE ORDER",  weight: 0.95 }
+      - { phrase: "PO NUMBER",       weight: 0.85 }
+      - { phrase: "BUYER",           weight: 0.50 }
+      - { phrase: "SHIP TO",         weight: 0.55 }
+    fields:
+      - name: po_number
+        required: true
+        extractor:
+          kind: labeled_value
+          labels: ["PO #", "PO Number", "Purchase Order #", "Purchase Order Number"]
+          shape: { kind: alphanumeric, min_length: 3, max_length: 30 }
+
+  - name: contract
+    description: An executed agreement between parties
+    industries: [all]
+    keywords:
+      - { phrase: "AGREEMENT",       weight: 0.55 }
+      - { phrase: "THIS CONTRACT",   weight: 0.85 }
+      - { phrase: "WHEREAS",         weight: 0.70 }
+      - { phrase: "PARTIES",         weight: 0.50 }
+      - { phrase: "EFFECTIVE DATE",  weight: 0.65 }
+      - { phrase: "TERMINATION",     weight: 0.55 }
+      - { phrase: "GOVERNING LAW",   weight: 0.80 }
+    fields:
+      - name: effective_date
+        required: false
+        extractor:
+          kind: labeled_value
+          labels: ["Effective Date", "Effective"]
+          shape: { kind: date, max_length: 30 }
+
+vendors: []   # the base pack defines no vendors — industry packs add them

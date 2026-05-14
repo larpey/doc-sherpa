@@ -90,6 +90,22 @@ class Settings(BaseSettings):
         description="Sessions are eligible for cleanup after this many hours.",
     )
 
+    # --- knowledge base ---------------------------------------------------
+    packs_dir: Path | None = Field(
+        default=None,
+        description=(
+            "Override the packs directory. Default is `<project>/packs/` "
+            "relative to the package."
+        ),
+    )
+    active_packs: tuple[str, ...] = Field(
+        default=("logistics", "healthcare"),
+        description=(
+            "Industry packs to load alongside _base.yaml. Vocabulary in the "
+            "labeling dropdown comes from this set."
+        ),
+    )
+
     @property
     def database_path(self) -> Path:
         """Absolute path to the SQLite file. Created on first access by `db.init_db`."""

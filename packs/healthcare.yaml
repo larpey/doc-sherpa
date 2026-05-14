@@ -1,0 +1,74 @@
+# Healthcare pack — clinical & administrative documents.
+# Minimal seed; production-grade pack needs careful HIPAA-aware curation.
+
+version: 1
+metadata:
+  name: healthcare
+  description: Clinical and insurance documents
+  industries: [healthcare, clinical, dental, veterinary]
+  extends: base
+
+doc_types:
+
+  - name: prescription
+    description: A practitioner's order for medication
+    industries: [healthcare, clinical, dental]
+    keywords:
+      - { phrase: "RX",                weight: 0.85 }
+      - { phrase: "PRESCRIPTION",      weight: 0.90 }
+      - { phrase: "DISPENSE",          weight: 0.75 }
+      - { phrase: "REFILLS",           weight: 0.85 }
+      - { phrase: "SIG:",              weight: 0.75 }
+      - { phrase: "DEA #",             weight: 0.90 }
+      - { phrase: "NPI",               weight: 0.85 }
+    fields:
+      - name: drug_name
+        required: false
+        extractor:
+          kind: labeled_value
+          labels: ["Drug", "Medication", "Rx"]
+          shape: { kind: alphanumeric, max_length: 80 }
+      - name: prescriber_npi
+        required: false
+        extractor:
+          kind: labeled_value
+          labels: ["NPI", "NPI #"]
+          shape: { kind: digits, min_length: 10, max_length: 10 }
+
+  - name: lab_result
+    description: Laboratory test results
+    industries: [healthcare, clinical]
+    keywords:
+      - { phrase: "LAB RESULT",        weight: 0.95 }
+      - { phrase: "LABORATORY",        weight: 0.65 }
+      - { phrase: "REFERENCE RANGE",   weight: 0.90 }
+      - { phrase: "SPECIMEN",          weight: 0.75 }
+      - { phrase: "ORDERING PROVIDER", weight: 0.75 }
+      - { phrase: "ACCESSION",         weight: 0.85 }
+    fields:
+      - name: specimen_id
+        required: false
+        extractor:
+          kind: labeled_value
+          labels: ["Specimen ID", "Accession #", "Sample #"]
+          shape: { kind: alphanumeric, min_length: 4, max_length: 30 }
+
+  - name: insurance_claim
+    description: A claim submitted to a payer (CMS-1500, UB-04, etc.)
+    industries: [healthcare, clinical]
+    keywords:
+      - { phrase: "CMS-1500",          weight: 0.95 }
+      - { phrase: "HEALTH INSURANCE CLAIM", weight: 0.95 }
+      - { phrase: "POLICY NUMBER",     weight: 0.75 }
+      - { phrase: "DIAGNOSIS CODE",    weight: 0.85 }
+      - { phrase: "ICD",               weight: 0.55 }
+      - { phrase: "CPT",               weight: 0.55 }
+    fields:
+      - name: policy_number
+        required: false
+        extractor:
+          kind: labeled_value
+          labels: ["Policy #", "Policy Number", "Member ID"]
+          shape: { kind: alphanumeric, min_length: 4, max_length: 30 }
+
+vendors: []

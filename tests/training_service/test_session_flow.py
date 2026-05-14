@@ -39,6 +39,8 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
     importlib.reload(documents_mod)
     import training_service.labels as labels_mod
     importlib.reload(labels_mod)
+    import training_service.kb_loader as kb_loader_mod
+    importlib.reload(kb_loader_mod)
     import training_service.templates as templates_mod
     importlib.reload(templates_mod)
     import training_service.routes as routes_mod

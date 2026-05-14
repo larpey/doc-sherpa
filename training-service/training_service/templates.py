@@ -15,8 +15,6 @@ from __future__ import annotations
 from datetime import datetime
 from html import escape
 
-from shared.types import DocumentType
-
 from .documents import Document
 from .labels import StoredLabel
 from .sessions import Session
@@ -104,11 +102,16 @@ def render_session_upload(session: Session) -> str:
     return _page("Upload — training service", body)
 
 
-def _doc_type_options(selected: DocumentType | None) -> str:
+def _doc_type_options(doc_types: list[str], selected: str | None) -> str:
+    """Render <option> tags for the doc-type dropdown.
+
+    Options come from the live KB, not a hardcoded enum — so a clinic install
+    shows `prescription` etc., a logistics install shows `bol`, and so on.
+    """
     options = ""
-    for dt in DocumentType:
-        sel = " selected" if selected and dt == selected else ""
-        options += f"<option value='{escape(dt.value)}'{sel}>{escape(dt.value)}</option>"
+    for name in doc_types:
+        sel = " selected" if selected and name == selected else ""
+        options += f"<option value='{escape(name)}'{sel}>{escape(name)}</option>"
     return options
 
 
@@ -121,7 +124,9 @@ def _input(name: str, value: str | None, placeholder: str = "") -> str:
 
 
 def render_session_label(
-    session: Session, pairs: list[tuple[Document, StoredLabel | None]]
+    session: Session,
+    pairs: list[tuple[Document, StoredLabel | None]],
+    doc_types: list[str],
 ) -> str:
     """Labeling form: one row per uploaded document.
 
@@ -152,7 +157,7 @@ def render_session_label(
           <div>
             <label for='dt-{escape(doc.id)}'>doc type</label>
             <select id='dt-{escape(doc.id)}' name='doc_type__{escape(doc.id)}' required>
-              {_doc_type_options(label.doc_type if label else None)}
+              {_doc_type_options(doc_types, label.doc_type if label else None)}
             </select>
           </div>
           <div>

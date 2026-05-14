@@ -13,12 +13,11 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, File, HTTPException, Request, UploadFile, status
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 
-from shared.types import DocumentType
-
 from . import documents as documents_module
 from . import labels as labels_module
 from . import sessions as sessions_module
 from . import templates
+from .kb_loader import get_kb
 from .settings import settings
 
 router = APIRouter()
@@ -43,6 +42,11 @@ def home() -> HTMLResponse:
     """Landing page: list recent sessions + button to start a new one."""
     recent = sessions_module.list_sessions(settings.database_path, limit=10)
     return HTMLResponse(templates.render_home(recent))
+
+
+def _known_doc_types() -> list[str]:
+    """Doc type names from the active KB, used to populate the labeling dropdown."""
+    return sorted(get_kb().doc_types.keys())
 
 
 @router.post("/sessions")
@@ -121,7 +125,9 @@ async def upload_documents(
 def session_label_page(session_id: str) -> HTMLResponse:
     session = _ensure_session(session_id)
     pairs = labels_module.list_documents_with_labels(settings.database_path, session.id)
-    return HTMLResponse(templates.render_session_label(session, pairs))
+    return HTMLResponse(
+        templates.render_session_label(session, pairs, _known_doc_types())
+    )
 
 
 @router.post("/sessions/{session_id}/labels")
@@ -137,18 +143,20 @@ async def save_labels(session_id: str, request: Request) -> RedirectResponse:
     form = await request.form()
     docs = documents_module.list_documents(settings.database_path, session.id)
 
+    known = set(_known_doc_types())
     saved = 0
     for doc in docs:
         doc_type_raw = form.get(f"doc_type__{doc.id}")
         if not isinstance(doc_type_raw, str) or not doc_type_raw:
             continue
-        try:
-            doc_type = DocumentType(doc_type_raw)
-        except ValueError as exc:
+        if doc_type_raw not in known:
             raise HTTPException(
                 status.HTTP_400_BAD_REQUEST,
-                detail=f"Unknown doc_type {doc_type_raw!r} for document {doc.id}",
-            ) from exc
+                detail=(
+                    f"Unknown doc_type {doc_type_raw!r} for document {doc.id}. "
+                    f"Must be one of: {', '.join(sorted(known))}"
+                ),
+            )
 
         def _str_or_none(key: str) -> str | None:
             v = form.get(key)
@@ -157,7 +165,7 @@ async def save_labels(session_id: str, request: Request) -> RedirectResponse:
         labels_module.upsert_label(
             db_path=settings.database_path,
             document_id=doc.id,
-            doc_type=doc_type,
+            doc_type=doc_type_raw,
             vendor=_str_or_none(f"vendor__{doc.id}"),
             identifier=_str_or_none(f"identifier__{doc.id}"),
             customer=_str_or_none(f"customer__{doc.id}"),

@@ -1,0 +1,100 @@
+# Logistics & distribution pack.
+# Loads alongside _base.yaml; adds BOLs, PODs, packing lists, and a few
+# real beverage-distributor vendors as seed examples.
+
+version: 1
+metadata:
+  name: logistics
+  description: Freight, distribution, and warehouse documents
+  industries: [logistics, distribution, beverage_distribution]
+  extends: base
+
+doc_types:
+
+  - name: bol
+    description: Bill of Lading — shipper-to-consignee freight document
+    industries: [logistics, distribution]
+    keywords:
+      - { phrase: "BILL OF LADING",  weight: 0.95 }
+      - { phrase: "BOL NUMBER",      weight: 0.95 }
+      - { phrase: "FREIGHT BILL",    weight: 0.85 }
+      - { phrase: "PACKING LIST",    weight: 0.75 }
+      - { phrase: "PACKING SLIP",    weight: 0.75 }
+      - { phrase: "CONSIGNEE",       weight: 0.70 }
+      - { phrase: "SHIPPER",         weight: 0.60 }
+      - { phrase: "SCAC",            weight: 0.85 }
+      - { phrase: "SEAL NUMBER",     weight: 0.85 }
+      - { phrase: "STRAIGHT BILL",   weight: 0.95 }
+    fields:
+      - name: bol_number
+        required: true
+        extractor:
+          kind: labeled_value
+          labels: ["BOL #", "Bill of Lading #", "BOL Number", "Reference #"]
+          shape: { kind: alphanumeric, min_length: 4, max_length: 30, uppercase: true }
+      - name: shipper
+        required: false
+        extractor:
+          kind: labeled_value
+          labels: ["Shipper", "From"]
+          shape: { kind: alphanumeric, max_length: 80 }
+      - name: consignee
+        required: false
+        extractor:
+          kind: labeled_value
+          labels: ["Consignee", "Ship To", "Deliver To"]
+          shape: { kind: alphanumeric, max_length: 80 }
+
+  - name: pod
+    description: Proof of Delivery — signed receipt at destination
+    industries: [logistics, distribution]
+    keywords:
+      - { phrase: "PROOF OF DELIVERY",    weight: 0.95 }
+      - { phrase: "DELIVERY RECEIPT",     weight: 0.90 }
+      - { phrase: "DELIVERY CONFIRMATION",weight: 0.90 }
+      - { phrase: "CASES RECEIVED",       weight: 0.85 }
+      - { phrase: "PALLETS RECEIVED",     weight: 0.85 }
+      - { phrase: "CUSTOMER SIGNATURE",   weight: 0.80 }
+      - { phrase: "RECEIVED BY",          weight: 0.65 }
+    fields:
+      - name: delivery_date
+        required: false
+        extractor:
+          kind: labeled_value
+          labels: ["Delivery Date", "Date Received", "Delivered"]
+          shape: { kind: date, max_length: 30 }
+
+vendors:
+  # Sample seed vendors — beverage distribution. Demonstrates how a pack
+  # carries vendor-level extractor overrides. Real-world packs would have
+  # dozens; this is enough to test the merge + override pipeline.
+
+  - canonical: Heineken
+    aliases: ["HEINEKEN", "HEINEKEN USA"]
+    industries: [beverage_distribution]
+    likely_doc_types: [bol]
+    field_extractors:
+      bol.bol_number:
+        kind: labeled_value
+        labels: ["PO #", "Purchase Order #"]
+        shape: { kind: alphanumeric, min_length: 4, max_length: 20, uppercase: true }
+
+  - canonical: Molson Coors
+    aliases: ["MOLSON COORS", "MCBC"]
+    industries: [beverage_distribution]
+    likely_doc_types: [bol]
+    field_extractors:
+      bol.bol_number:
+        kind: labeled_value
+        labels: ["Bill of lading number"]
+        shape: { kind: alphanumeric, min_length: 4, max_length: 20, uppercase: true }
+
+  - canonical: Anheuser Busch
+    aliases: ["ANHEUSER BUSCH", "ANHEUSER-BUSCH"]
+    industries: [beverage_distribution]
+    likely_doc_types: [bol]
+    field_extractors:
+      bol.bol_number:
+        kind: labeled_value
+        labels: ["Shipment No"]
+        shape: { kind: alphanumeric, min_length: 4, max_length: 20, uppercase: true }
