@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from typing import Protocol, runtime_checkable
 
-from shared.types import ClassificationResult
+from shared.types import Classification
 
 
 @runtime_checkable
@@ -26,7 +26,7 @@ class AIClassifier(Protocol):
     name: str
     """Stable identifier (e.g. `"anthropic-claude"`)."""
 
-    def classify(self, ocr_text: str, known_vendors: list[str] | None = None) -> ClassificationResult | None:
+    def classify(self, ocr_text: str, known_vendors: list[str] | None = None) -> Classification | None:
         """Classify a document from its OCR text.
 
         Args:
@@ -37,7 +37,7 @@ class AIClassifier(Protocol):
                 conventions instead of inventing new vendor spellings.
 
         Returns:
-            A `ClassificationResult` on success, or `None` on any
+            A `Classification` on success, or `None` on any
             unrecoverable failure (timeout, auth error, malformed response,
             daily cap exhausted). Callers should treat `None` as "the regex
             path is the ground truth" and route to the review queue.
